@@ -1,13 +1,27 @@
-local actions = require('telescope.actions')
-local action_state = require('telescope.actions.state')
-local finders = require('telescope.finders')
-local pickers = require('telescope.pickers')
-local entry_display = require('telescope.pickers.entry_display')
-local conf = require('telescope.config').values
+---@class Picker
+---@field is_installed fun(): boolean
+---@field insert_digraph fun(digraphs: DigraphEntry[])
+
+---@class DigraphEntry
+---@field symbol string
+---@field digraph string
+---@field name string
+
+---@class Options
+---@field picker string?
+---@field digraphs DigraphEntry[]?
+---@field exclude_builtin_digraphs boolean?
 
 -- Module initialisation
 local M = {}
 M.digraphs = require('digraph-picker.digraphs')
+M.picker = "telescope"
+
+local pickers = {
+  telescope = require("digraph-picker.picker.telescope"),
+  snacks = require("digraph-picker.picker.snacks"),
+  vim_ui_select = require("digraph-picker.picker.vim_ui_select"),
+}
 
 -- Merges a source digraphs table (`src`) into a destination (`dst`) digraphs table. The digraphs table contains a list of digraph definitions. Here's an example of a digraphs table:
 --
@@ -104,6 +118,7 @@ end
 --   `digraphs`: A table of digraph definitions (see `merge_digraphs`).
 --   `exclude_builtin_digraphs``: Setting this to `true` stops the builtin digraph table from loading.
 --
+---@param opts Options?
 function M.setup(opts)
   opts = opts or {}
   opts.digraphs = opts.digraphs or {}
@@ -121,98 +136,22 @@ function M.setup(opts)
     table.insert(symbols, def.symbol)
   end
   M.update_vim_digraphs(symbols, M.digraphs)
-end
-
--- Custom column layout for Telescope display
-local function make_display(entry)
-  local displayer = entry_display.create({
-    separator = ' ',
-    items = {
-      { width = 0.1 },
-      { width = 0.1 },
-      { width = 0.8 },
-    },
-  })
-  return displayer({
-    { entry.value.symbol,  'TelescopeResultsIdentifier' },
-    { entry.value.digraph, 'TelescopeResultsNumber' },
-    entry.value.name,
-  })
-end
-
-local function debug(val)
-  vim.notify(vim.inspect(val), vim.log.levels.DEBUG)
-end
-
--- Sends string to the keyboard input buffer.
-local function sendkeys(str)
-  local keys = vim.api.nvim_replace_termcodes(str, true, false, true)
-  vim.api.nvim_feedkeys(keys, 'n', false)
-end
-
--- Insert `text` at the cursor.
--- `mode` is the mode of the window that the text is being inserted into.
-local function insert_text(text, mode)
-  local buf = vim.api.nvim_get_current_buf()
-  local pos = vim.api.nvim_win_get_cursor(0)
-  local row = pos[1]
-  local col = pos[2]
-  if mode ~= 'i' then
-    col = col - 1
-  end
-  local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ''
-  local new_line = line:sub(1, col) .. text .. line:sub(col + 1)
-  vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { new_line })
-  local new_col = col + #text
-  vim.api.nvim_win_set_cursor(0, { row, new_col })
+  opts.picker = opts.picker or M.picker
+  M.picker = opts.picker
 end
 
 -- `insert_digraph` opens a Telescope digraph picker and inserts the selected digraph character into the current window.
 -- This function is normally called in insert mode.
-function M.insert_digraph(opts)
-  opts = opts or {}
-  local mode = vim.api.nvim_get_mode().mode -- Mode of window being inserted into
-  pickers.new({}, {
-    prompt_title = "Insert Digraph",
-    finder = finders.new_table {
-      results = M.digraphs,
-      entry_maker = function(entry)
-        return {
-          value = entry,
-          display = make_display,
-          ordinal = entry.digraph .. ' ' .. entry.name,
-        }
-      end
-    },
-    sorter = conf.generic_sorter({}),
-    attach_mappings = function(prompt_bufnr, map)
-      -- Assign callback actions
-      map({ 'i', 'n' }, '<Esc>', function() -- User cancelled with Esc key
-        actions.close(prompt_bufnr)
-        debug("Picker cancelled")
-        if mode == 'i' then
-          sendkeys('a') -- Reenter insert mode
-        end
-      end)
-      actions.select_default:replace(function() -- User made digraph selection
-        actions.close(prompt_bufnr)
-        local selection = action_state.get_selected_entry()
-        if selection then
-          local symbol = selection.value.symbol
-          debug("Symbol selected: " .. symbol)
-          insert_text(symbol, mode)
-          if mode == 'i' then
-            sendkeys('a') -- Reenter insert mode
-          end
-        end
-      end)
-      return true
-    end,
-    layout_config = {
-      width = 0.8,
-      height = 0.5,
-    }
-  }):find()
+function M.insert_digraph()
+  if pickers.telescope.is_installed() and M.picker == "telescope" then
+    pickers.telescope.insert_digraph(M.digraphs)
+    return
+  end
+  if pickers.snacks.is_installed() and M.picker == "snacks" then
+    pickers.snacks.insert_digraph(M.digraphs)
+    return
+  end
+  pickers.vim_ui_select.insert_digraph(M.digraphs)
 end
 
 return M
